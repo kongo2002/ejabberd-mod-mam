@@ -266,11 +266,18 @@ get_proc(Host) ->
 %%% MongoDB functions
 %%%-------------------------------------------------------------------
 
+get_jid_document(Jid) ->
+    {U, S, R} = jlib:jid_tolower(Jid),
+    case R of
+        <<"">> -> bson:document([{user, U}, {server, S}]);
+        _  -> bson:document([{user, U}, {server, S}, {resource, R}])
+    end.
+
 get_message(Dir, LUser, LServer, Jid, Body) ->
     bson:document([
                    {user, LUser},
                    {server, LServer},
-                   {jid, Jid},
+                   {jid, get_jid_document(Jid)},
                    {body, Body},
                    {direction, Dir},
                    {ts, bson:timenow()}
