@@ -158,7 +158,7 @@ get_disco_features(Acc, _From, _To, _Node, _Lang) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Host, Opts]) ->
-    ?INFO_MSG("Starting mod_mam module of ~p", [Host]),
+    ?INFO_MSG("Starting mod_mam module of '~s'", [Host]),
 
     IQDisc = gen_mod:get_opt(iqdisc, Opts, false, one_queue),
     IgnoreChats = gen_mod:get_opt(ignore_chats, Opts, false, false),
@@ -218,7 +218,17 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({process_query, From, To, IQ}, State) ->
+handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
+    Children = Query#xmlel.children,
+    NoFilter = {undefined, undefined, undefined},
+    Filter = lists:foldl(fun process_filter/2, NoFilter, Children),
+    case Filter of
+        {error, E} ->
+            Error = IQ#iq{type = error, sub_el = [Query, E]},
+            ErrXml = jlib:iq_to_xml(Error),
+            ejabberd_router:route(To, From, ErrXml);
+        _ -> ?INFO_MSG("Filter: ~p", [Filter])
+    end,
 
     {noreply, State};
 
@@ -270,7 +280,7 @@ terminate(_Reason, State) ->
     Host = State#state.host,
     Pool = State#state.pool,
 
-    ?INFO_MSG("Stopping mod_mam module of ~p", [Host]),
+    ?INFO_MSG("Stopping mod_mam module of '~s'", [Host]),
 
     ejabberd_hooks:delete(user_send_packet, Host, ?MODULE, send_packet, 80),
     ejabberd_hooks:delete(user_receive_packet, Host, ?MODULE, receive_packet, 80),
@@ -278,6 +288,9 @@ terminate(_Reason, State) ->
     ejabberd_hooks:delete(disco_sm_features, Host, ?MODULE, get_disco_features, 99),
 
     ejabberd_hooks:delete(remove_user, Host, ?MODULE, remove_user, 50),
+
+    gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_MAM),
+    gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_MAM),
 
     resource_pool:close(Pool),
     ok.
@@ -318,6 +331,28 @@ extract_body(#xmlel{name = <<"message">>} = Xml, IgnoreChats) ->
     end;
 
 extract_body(_, _) -> ignore.
+
+process_filter(_, {error, _Response} = Error) -> Error;
+
+process_filter(#xmlel{name = <<"start">>} = Q, {S, E, J}) ->
+    Time = xml:get_tag_cdata(Q),
+    case {S, jlib:datetime_string_to_timestamp(Time)} of
+        {_, undefined} -> {error, ?ERR_BAD_REQUEST};
+        % 'start' tag may be defined only once
+        {undefined, Value} -> {Value, E, J};
+        _ -> {error, ?ERR_BAD_REQUEST}
+    end;
+
+process_filter(#xmlel{name = <<"end">>} = Q, {S, E, J}) ->
+    Time = xml:get_tag_cdata(Q),
+    case {E, jlib:datetime_string_to_timestamp(Time)} of
+        {_, undefined} -> {error, ?ERR_BAD_REQUEST};
+        % 'end' tag may be defined only once
+        {undefined, Value} -> {S, Value, J};
+        _ -> {error, ?ERR_BAD_REQUEST}
+    end;
+
+process_filter(_, Filter) -> Filter.
 
 get_proc(Host) ->
     gen_mod:get_module_proc(Host, ?PROCNAME).
