@@ -16,10 +16,10 @@
          stop/1,
          remove_user/2,
          send_packet/3,
-         receive_packet/4
-         % process_iq/3,
-         % process_local_iq/3,
-         % get_disco_features/5
+         receive_packet/4,
+         get_disco_features/5,
+         process_iq/3,
+         process_local_iq/3
         ]).
 
 
@@ -33,6 +33,9 @@
 
 -define(PROCNAME, ejabberd_mod_mam).
 -define(POOL_SIZE, 10).
+-define(MAX_QUERY_LIMIT, 100).
+
+-define(NS_MAM, <<"urn:xmpp:mam:tmp">>).
 
 -record(state, {host = <<"">>        :: binary(),
                 ignore_chats = false :: boolean(),
@@ -57,13 +60,14 @@ start_link(Host, Opts) ->
 start(Host, Opts) ->
     Proc = get_proc(Host),
 
-    application:ensure_started(bson),
-    application:ensure_started(mongodb),
+    % make sure bson and mongodb are running
+    ok = application:ensure_started(bson),
+    ok = application:ensure_started(mongodb),
 
     Child =
         {Proc,
          {?MODULE, start_link, [Host, Opts]},
-         temporary,
+         permanent,
          1000,
          worker,
          [?MODULE]},
@@ -94,6 +98,49 @@ remove_user(User, Server) ->
 
     ok.
 
+%%%-------------------------------------------------------------------
+%%% IQ handling callbacks
+%%%-------------------------------------------------------------------
+
+process_iq(From, To, IQ) ->
+    process_local_iq(From, To, IQ).
+
+process_local_iq(From, To, #iq{sub_el = SubEl} = IQ) ->
+    ?INFO_MSG("IQ: ~p", [IQ]),
+
+    Server = From#jid.lserver,
+    case lists:member(Server, ?MYHOSTS) of
+        false ->
+            IQ#iq{type=error, sub_el=[SubEl, ?ERR_NOT_ALLOWED]};
+        true ->
+            case SubEl#xmlel.name of
+                <<"query">> ->
+                    Proc = get_proc(Server),
+                    gen_server:cast(Proc, {process_query, From, To, IQ}),
+
+                    % we have to delay the response IQ until
+                    % all messages are sent to the client
+                    ignore;
+                _ -> IQ#iq{type = error,
+                               sub_el = [SubEl, ?ERR_FEATURE_NOT_IMPLEMENTED]}
+            end
+    end.
+
+
+%%%-------------------------------------------------------------------
+%%% Service discovery
+%%%-------------------------------------------------------------------
+
+get_disco_features(Acc, _From, _To, <<"">>, _Lang) ->
+    Features = case Acc of
+                   {result, I} -> I;
+                   _ -> []
+               end,
+
+    {result, Features ++ [?NS_MAM]};
+
+get_disco_features(Acc, _From, _To, _Node, _Lang) ->
+    Acc.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -111,10 +158,9 @@ remove_user(User, Server) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Host, Opts]) ->
-    % todo: disco
-
     ?INFO_MSG("Starting mod_mam module of ~p", [Host]),
 
+    IQDisc = gen_mod:get_opt(iqdisc, Opts, false, one_queue),
     IgnoreChats = gen_mod:get_opt(ignore_chats, Opts, false, false),
     MongoConn = gen_mod:get_opt(mongo, Opts,
                                 fun ({H, P}) -> {H, P} end,
@@ -123,6 +169,14 @@ init([Host, Opts]) ->
     % hook into send/receive packet
     ejabberd_hooks:add(user_send_packet, Host, ?MODULE, send_packet, 80),
     ejabberd_hooks:add(user_receive_packet, Host, ?MODULE, receive_packet, 80),
+    ejabberd_hooks:add(disco_local_features, Host, ?MODULE, get_disco_features, 99),
+    ejabberd_hooks:add(disco_sm_features, Host, ?MODULE, get_disco_features, 99),
+
+    % hook into IQ stanzas
+    gen_iq_handler:add_iq_handler(ejabberd_sm, Host, ?NS_MAM, ?MODULE,
+                                  process_iq, IQDisc),
+    gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_MAM, ?MODULE,
+                                  process_local_iq, IQDisc),
 
     % hook into user removal
     ejabberd_hooks:add(remove_user, Host, ?MODULE, remove_user, 50),
@@ -164,6 +218,10 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast({process_query, From, To, IQ}, State) ->
+
+    {noreply, State};
+
 handle_cast({log, Dir, LUser, LServer, Jid, Packet}, State) ->
     ?INFO_MSG("Packet: ~p", [Packet]),
     case should_store(LUser, LServer) of
@@ -216,6 +274,8 @@ terminate(_Reason, State) ->
 
     ejabberd_hooks:delete(user_send_packet, Host, ?MODULE, send_packet, 80),
     ejabberd_hooks:delete(user_receive_packet, Host, ?MODULE, receive_packet, 80),
+    ejabberd_hooks:delete(disco_local_features, Host, ?MODULE, get_disco_features, 99),
+    ejabberd_hooks:delete(disco_sm_features, Host, ?MODULE, get_disco_features, 99),
 
     ejabberd_hooks:delete(remove_user, Host, ?MODULE, remove_user, 50),
 
