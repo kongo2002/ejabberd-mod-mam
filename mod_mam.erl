@@ -33,7 +33,7 @@
 
 -define(PROCNAME, ejabberd_mod_mam).
 -define(POOL_SIZE, 10).
--define(MAX_QUERY_LIMIT, 100).
+-define(MAX_QUERY_LIMIT, 50).
 
 -define(NS_MAM, <<"urn:xmpp:mam:tmp">>).
 
@@ -221,13 +221,17 @@ handle_call(_Request, _From, State) ->
 handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
     Children = Query#xmlel.children,
     NoFilter = {undefined, undefined, undefined},
-    Filter = lists:foldl(fun process_filter/2, NoFilter, Children),
-    case Filter of
+    case lists:foldl(fun process_filter/2, NoFilter, Children) of
         {error, E} ->
             Error = IQ#iq{type = error, sub_el = [Query, E]},
             ErrXml = jlib:iq_to_xml(Error),
             ejabberd_router:route(To, From, ErrXml);
-        _ -> ?INFO_MSG("Filter: ~p", [Filter])
+        {S, E, _J} ->
+            User = From#jid.luser,
+            Pool = State#state.pool,
+            Fs = [{start, S}, {'end', E}],
+            Ms = find(Pool, User, Fs),
+            ?INFO_MSG("Msg: ~p", [Ms])
     end,
 
     {noreply, State};
@@ -332,7 +336,7 @@ extract_body(#xmlel{name = <<"message">>} = Xml, IgnoreChats) ->
 
 extract_body(_, _) -> ignore.
 
-process_filter(_, {error, _Response} = Error) -> Error;
+process_filter(_, {error, _E} = Error) -> Error;
 
 process_filter(#xmlel{name = <<"start">>} = Q, {S, E, J}) ->
     Time = xml:get_tag_cdata(Q),
@@ -364,28 +368,51 @@ get_proc(Host) ->
 get_jid_document(Jid) ->
     {U, S, R} = jlib:jid_tolower(Jid),
     case R of
-        <<"">> -> bson:document([{user, U}, {server, S}]);
-        _  -> bson:document([{user, U}, {server, S}, {resource, R}])
+        <<"">> -> {user, U, server, S};
+        _  -> {user, U, server, S, resource, R}
     end.
 
 get_message(Dir, LUser, LServer, Jid, Body) ->
-    bson:document([
-                   {user, LUser},
-                   {server, LServer},
-                   {jid, get_jid_document(Jid)},
-                   {body, Body},
-                   {direction, Dir},
-                   {ts, bson:timenow()}
-                  ]).
+    { user, LUser,
+      server, LServer,
+      jid, get_jid_document(Jid),
+      body, Body,
+      direction, Dir,
+      ts, bson:timenow()
+    }.
+
+to_query(_Key, undefined) -> undefined;
+to_query(start, Start)    -> {ts, {'$gte', Start}};
+to_query('end', End)      -> {ts, {'$lte', End}};
+to_query(_Key, _Value)    -> undefined.
+
+add_to_query({_Key, undefined}, Query) -> Query;
+add_to_query({Key, X}, Query) ->
+    case to_query(Key, X) of
+        undefined -> Query;
+        Value -> [Value | Query]
+    end.
+
+find(Pool, User, Filter) ->
+    BaseQuery = [{user, User}],
+    Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
+    ?INFO_MSG("Query: ~p", [Query]),
+    Fun = fun () -> mongo:find(messages, Query) end,
+    Cursor = exec(Pool, Fun),
+    % TODO: limit by RSM
+    mongo:take(?MAX_QUERY_LIMIT, Cursor).
 
 insert(Pool, Element) ->
     Fun = fun () -> mongo:insert(messages, Element) end,
-    exec(Pool, Fun).
+    exec(Pool, Fun, unsafe).
 
 exec(Pool, Function) ->
+    exec(Pool, Function, safe).
+
+exec(Pool, Function, Mode) ->
     case resource_pool:get(Pool) of
         {ok, Conn} ->
-            case mongo:do(safe, slave_ok, Conn, test, Function) of
+            case mongo:do(Mode, slave_ok, Conn, test, Function) of
                 {ok, {}} -> none;
                 {ok, {Found}} -> Found;
                 {ok, Cursor} -> Cursor
