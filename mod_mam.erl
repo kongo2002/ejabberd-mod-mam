@@ -37,6 +37,22 @@
 
 -define(NS_MAM, <<"urn:xmpp:mam:tmp">>).
 
+-define(MAM_POLICY_VIOLATION(Text),
+        #xmlel{name = <<"iq">>,
+               attrs = [{<<"type">>, <<"error">>}],
+               children =
+               [#xmlel{name = <<"error">>,
+                       attrs = [{<<"type">>, <<"modify">>}],
+                       children = [
+                                   #xmlel{name = <<"policy-violation">>,
+                                          attrs = [{<<"xmlns">>, ?NS_STANZAS}]},
+                                   #xmlel{name = <<"text">>,
+                                          attrs = [{<<"xmlns">>, ?NS_STANZAS}],
+                                          children = [{xmlcdata, Text}]}
+                                  ]
+                      }
+               ]}).
+
 -record(state, {host = <<"">>        :: binary(),
                 ignore_chats = false :: boolean(),
                 pool}).
@@ -238,8 +254,11 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
             User = From#jid.luser,
             Pool = State#state.pool,
             Fs = [{start, S}, {'end', E}],
-            Ms = find(Pool, User, Fs, RSM),
-            ?INFO_MSG("Msg: ~p", [Ms])
+            case find(Pool, User, Fs, RSM) of
+                {error, Error} ->
+                    ejabberd_router:route(To, From, Error);
+                Ms -> ?INFO_MSG("Msg: ~p", [Ms])
+            end
     end,
 
     {noreply, State};
@@ -471,8 +490,13 @@ find(Pool, User, Filter, RSM) ->
                 {true, Max} ->
                     mongo:take(Max, Cursor);
                 {false, Max} ->
-                    % TODO: check for policy violation
-                    mongo:take(Max+1, Cursor)
+                    Rs = mongo:take(Max+1, Cursor),
+                    Len = length(Rs),
+                    if Len > Max ->
+                           E = ?MAM_POLICY_VIOLATION(<<"Too many results">>),
+                           {error, E};
+                       true -> Rs
+                    end
             end
     end.
 
