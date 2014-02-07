@@ -115,6 +115,7 @@ process_local_iq(From, To, #iq{sub_el = SubEl} = IQ) ->
     Server = From#jid.lserver,
     case lists:member(Server, ?MYHOSTS) of
         false ->
+            % wrong server
             IQ#iq{type=error, sub_el=[SubEl, ?ERR_NOT_ALLOWED]};
         true ->
             case SubEl#xmlel.name of
@@ -125,8 +126,10 @@ process_local_iq(From, To, #iq{sub_el = SubEl} = IQ) ->
                     % we have to delay the response IQ until
                     % all messages are sent to the client
                     ignore;
-                _ -> IQ#iq{type = error,
-                               sub_el = [SubEl, ?ERR_FEATURE_NOT_IMPLEMENTED]}
+                _ ->
+                    % we do not support anything other than 'query'
+                    IQ#iq{type = error,
+                          sub_el = [SubEl, ?ERR_FEATURE_NOT_IMPLEMENTED]}
             end
     end.
 
@@ -235,7 +238,7 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
             User = From#jid.luser,
             Pool = State#state.pool,
             Fs = [{start, S}, {'end', E}],
-            Ms = find(Pool, User, Fs),
+            Ms = find(Pool, User, Fs, RSM),
             ?INFO_MSG("Msg: ~p", [Ms])
     end,
 
@@ -378,6 +381,12 @@ parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
     parse_rsm(Cs, Result);
 parse_rsm([_ | Cs], RSM) -> parse_rsm(Cs, RSM).
 
+get_limit(#rsm{max = M}) ->
+    case M of
+        Max when is_integer(Max), Max =< ?MAX_QUERY_LIMIT -> {true, Max};
+        _ -> {false, ?MAX_QUERY_LIMIT}
+    end.
+
 process_filter(_, {error, _E} = Error) -> Error;
 
 process_filter(#xmlel{name = <<"start">>} = Q, {S, E, J, RSM}) ->
@@ -449,14 +458,23 @@ add_to_query({Key, X}, Query) ->
         Value -> [Value | Query]
     end.
 
-find(Pool, User, Filter) ->
+find(Pool, User, Filter, RSM) ->
     BaseQuery = [{user, User}],
     Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
     ?INFO_MSG("Query: ~p", [Query]),
     Fun = fun () -> mongo:find(messages, Query) end,
-    Cursor = exec(Pool, Fun),
-    % TODO: limit by RSM
-    mongo:take(?MAX_QUERY_LIMIT+1, Cursor).
+
+    case exec(Pool, Fun) of
+        false -> ok;
+        Cursor ->
+            case get_limit(RSM) of
+                {true, Max} ->
+                    mongo:take(Max, Cursor);
+                {false, Max} ->
+                    % TODO: check for policy violation
+                    mongo:take(Max+1, Cursor)
+            end
+    end.
 
 insert(Pool, Element) ->
     Fun = fun () -> mongo:insert(messages, Element) end,
