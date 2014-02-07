@@ -41,6 +41,10 @@
                 ignore_chats = false :: boolean(),
                 pool}).
 
+-record(rsm, {max = none,
+              after_item = none,
+              before_item = none,
+              index = none}).
 
 %%%===================================================================
 %%% API
@@ -220,13 +224,14 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
     Children = Query#xmlel.children,
-    NoFilter = {undefined, undefined, undefined},
+    NoFilter = {undefined, undefined, undefined, #rsm{}},
     case lists:foldl(fun process_filter/2, NoFilter, Children) of
         {error, E} ->
             Error = IQ#iq{type = error, sub_el = [Query, E]},
             ErrXml = jlib:iq_to_xml(Error),
             ejabberd_router:route(To, From, ErrXml);
-        {S, E, _J} ->
+        {S, E, J, RSM} ->
+            ?INFO_MSG("Filter: ~p", [{S, E, J, RSM}]),
             User = From#jid.luser,
             Pool = State#state.pool,
             Fs = [{start, S}, {'end', E}],
@@ -314,7 +319,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-should_store(User, Server) ->
+should_store(_User, _Server) ->
     % TODO
     true.
 
@@ -336,24 +341,75 @@ extract_body(#xmlel{name = <<"message">>} = Xml, IgnoreChats) ->
 
 extract_body(_, _) -> ignore.
 
+int_cdata(Tag) ->
+    CD = xml:get_tag_cdata(Tag),
+    case catch binary_to_integer(CD) of
+        I when is_integer(I) -> I;
+        _ -> error
+    end.
+
+parse_rsm(_, error) -> error;
+parse_rsm([], RSM) -> RSM;
+parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
+    Result = case Name of
+        <<"max">> ->
+            case int_cdata(C) of
+                error -> error;
+                Max -> RSM#rsm{max = Max}
+            end;
+        <<"after">> ->
+            case xml:get_tag_cdata(C) of
+                <<"">> -> error;
+                CD -> RSM#rsm{after_item = CD}
+            end;
+        <<"before">> ->
+            case xml:get_tag_cdata(C) of
+                <<"">> -> error;
+                CD -> RSM#rsm{before_item = CD}
+            end;
+        <<"index">> ->
+            case xml:get_tag_cdata(C) of
+                <<"">> -> error;
+                CD -> RSM#rsm{index = CD}
+            end;
+        _ -> error
+    end,
+
+    parse_rsm(Cs, Result);
+parse_rsm([_ | Cs], RSM) -> parse_rsm(Cs, RSM).
+
 process_filter(_, {error, _E} = Error) -> Error;
 
-process_filter(#xmlel{name = <<"start">>} = Q, {S, E, J}) ->
+process_filter(#xmlel{name = <<"start">>} = Q, {S, E, J, RSM}) ->
     Time = xml:get_tag_cdata(Q),
     case {S, jlib:datetime_string_to_timestamp(Time)} of
         {_, undefined} -> {error, ?ERR_BAD_REQUEST};
         % 'start' tag may be defined only once
-        {undefined, Value} -> {Value, E, J};
+        {undefined, Value} -> {Value, E, J, RSM};
         _ -> {error, ?ERR_BAD_REQUEST}
     end;
 
-process_filter(#xmlel{name = <<"end">>} = Q, {S, E, J}) ->
+process_filter(#xmlel{name = <<"end">>} = Q, {S, E, J, RSM}) ->
     Time = xml:get_tag_cdata(Q),
     case {E, jlib:datetime_string_to_timestamp(Time)} of
         {_, undefined} -> {error, ?ERR_BAD_REQUEST};
         % 'end' tag may be defined only once
-        {undefined, Value} -> {S, Value, J};
+        {undefined, Value} -> {S, Value, J, RSM};
         _ -> {error, ?ERR_BAD_REQUEST}
+    end;
+
+process_filter(#xmlel{name = <<"set">>} = Q, {S, E, J, RSM}) ->
+    % search for a RSM (XEP-0059) query statement
+    case xml:get_tag_attr_s(<<"xmlns">>, Q) of
+        ?NS_RSM ->
+            Children = Q#xmlel.children,
+            case parse_rsm(Children, RSM) of
+                error -> {error, ?ERR_BAD_REQUEST};
+                NRSM -> {S, E, J, NRSM}
+            end;
+        _ ->
+            % unknown/invalid 'set' statement
+            {error, ?ERR_BAD_REQUEST}
     end;
 
 process_filter(_, Filter) -> Filter.
@@ -400,7 +456,7 @@ find(Pool, User, Filter) ->
     Fun = fun () -> mongo:find(messages, Query) end,
     Cursor = exec(Pool, Fun),
     % TODO: limit by RSM
-    mongo:take(?MAX_QUERY_LIMIT, Cursor).
+    mongo:take(?MAX_QUERY_LIMIT+1, Cursor).
 
 insert(Pool, Element) ->
     Fun = fun () -> mongo:insert(messages, Element) end,
