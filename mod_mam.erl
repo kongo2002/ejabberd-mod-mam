@@ -265,11 +265,15 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
             ?INFO_MSG("Filter: ~p", [{S, E, J, RSM}]),
             User = From#jid.luser,
             Pool = State#state.pool,
+            QueryId = xml:get_tag_attr_s(<<"queryid">>, Query),
             Fs = [{start, S}, {'end', E}],
+
             case find(Pool, User, Fs, RSM) of
                 {error, Error} ->
                     ejabberd_router:route(To, From, Error);
-                Ms -> ?INFO_MSG("Msg: ~p", [Ms])
+                Ms when is_list(Ms) ->
+                    ?INFO_MSG("Messages: ~p", [Ms]),
+                    spawn(fun() -> query_response(Ms, To, From, QueryId) end)
             end
     end,
 
@@ -284,7 +288,7 @@ handle_cast({log, Dir, LUser, LServer, Jid, Packet}, State) ->
                 ignore -> ok;
                 Body ->
                     Pool = State#state.pool,
-                    Doc = get_message(Dir, LUser, LServer, Jid, Body),
+                    Doc = msg_to_bson(Dir, LUser, LServer, Jid, Body, Packet),
                     insert(Pool, Doc)
             end;
         false -> ok
@@ -452,6 +456,24 @@ process_filter(#xmlel{name = <<"set">>} = Q, {S, E, J, RSM}) ->
 
 process_filter(_, Filter) -> Filter.
 
+query_response(Messages, From, To, QueryId) ->
+    Attr = [{<<"to">>, jlib:jid_to_string(To)}],
+    Send = fun (Message) ->
+                   case bson_to_msg(Message, QueryId) of
+                       none -> ok;
+                       M ->
+                           Xml = #xmlel{name = <<"message">>,
+                                        attrs = Attr,
+                                        children = [M]},
+                           ?INFO_MSG("Response: ~p", [Xml]),
+                           ejabberd_router:route(From, To, Xml)
+                   end
+           end,
+    lists:foreach(Send, Messages),
+
+    %TODO: terminating IQ stanza
+    ok.
+
 get_proc(Host) ->
     gen_mod:get_module_proc(Host, ?PROCNAME).
 
@@ -466,14 +488,65 @@ get_jid_document(Jid) ->
         _  -> {user, U, server, S, resource, R}
     end.
 
-get_message(Dir, LUser, LServer, Jid, Body) ->
+msg_to_bson(Dir, LUser, LServer, Jid, Body, Xml) ->
     { user, LUser,
       server, LServer,
       jid, get_jid_document(Jid),
       body, Body,
       direction, Dir,
-      ts, bson:timenow()
+      ts, bson:timenow(),
+      raw, xml:element_to_binary(Xml)
     }.
+
+bson_to_msg(Bson, QueryId) ->
+    case Bson of
+        {'_id', Id, raw, Raw, ts, Ts} ->
+            bson_to_msg(Id, Raw, Ts, QueryId);
+        {'_id', Id, ts, Ts, raw, Raw} ->
+            bson_to_msg(Id, Raw, Ts, QueryId);
+        _ -> none
+    end.
+
+bson_to_msg(Id, Raw, Ts, QueryId) ->
+    case xml_stream:parse_element(Raw) of
+        {error, _Error} -> none;
+        Xml ->
+            Attrs = [{<<"xmlns">>, ?NS_MAM},
+                     {<<"id">>, objectid_to_binary(Id)}],
+
+            % add 'queryid' if specified
+            As = case QueryId of
+                     <<"">> -> Attrs;
+                     QId -> [{<<"queryid">>, QId} | Attrs]
+                 end,
+
+            % build 'delay' node
+            UTC = calendar:now_to_universal_time(Ts),
+            {Time, TZ} = jlib:timestamp_to_iso(UTC, utc),
+            Stamp = <<Time/binary, TZ/binary>>,
+            Delay = #xmlel{name = <<"delay">>,
+                           attrs = [{<<"xmlns">>, ?NS_DELAY},
+                                    {<<"stamp">>, Stamp}]},
+
+            #xmlel{name = <<"result">>, attrs = As,
+                   children = [ #xmlel{name = <<"forwarded">>,
+                                       attrs = [{<<"xmlns">>, <<"urn:xmpp:forward:0">>}],
+                                       children = [Delay, Xml]}
+                              ]}
+    end.
+
+objectid_to_binary({Id}) -> objectid_to_binary(Id, []).
+
+objectid_to_binary(<<>>, Result) ->
+    list_to_binary(lists:reverse(Result));
+objectid_to_binary(<<Hex:8, Bin/binary>>, Result) ->
+    SL1 = erlang:integer_to_list(Hex, 16),
+    SL2 = case erlang:length(SL1) of
+        1 -> ["0"|SL1];
+        _ -> SL1
+    end,
+    objectid_to_binary(Bin, [SL2|Result]).
+
 
 to_query(_Key, undefined) -> undefined;
 to_query(start, Start)    -> {ts, {'$gte', Start}};
@@ -491,7 +564,8 @@ find(Pool, User, Filter, RSM) ->
     BaseQuery = [{user, User}],
     Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
     ?INFO_MSG("Query: ~p", [Query]),
-    Fun = fun () -> mongo:find(messages, Query) end,
+    Proj = {'_id', true, raw, true, ts, true},
+    Fun = fun () -> mongo:find(messages, Query, Proj) end,
 
     case exec(Pool, Fun) of
         false -> ok;
