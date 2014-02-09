@@ -14,7 +14,6 @@
 -export([start_link/2,
          start/2,
          stop/1,
-         remove_user/2,
          send_packet/3,
          receive_packet/4,
          get_disco_features/5,
@@ -110,13 +109,6 @@ receive_packet(_Jid, From, To, Packet) ->
     Proc = get_proc(Host),
     gen_server:cast(Proc, {log, from, To#jid.luser, Host, From, Packet}).
 
-remove_user(User, Server) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    US = {LUser, LServer},
-    % TODO: remove from mongo
-
-    ok.
 
 %%%-------------------------------------------------------------------
 %%% IQ handling callbacks
@@ -200,9 +192,6 @@ init([Host, Opts]) ->
                                   process_iq, IQDisc),
     gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_MAM, ?MODULE,
                                   process_local_iq, IQDisc),
-
-    % hook into user removal
-    ejabberd_hooks:add(remove_user, Host, ?MODULE, remove_user, 50),
 
     MPool = resource_pool:new(mongo:connect_factory(MongoConn), ?POOL_SIZE),
 
@@ -317,8 +306,6 @@ terminate(_Reason, State) ->
     ejabberd_hooks:delete(user_receive_packet, Host, ?MODULE, receive_packet, 80),
     ejabberd_hooks:delete(disco_local_features, Host, ?MODULE, get_disco_features, 99),
     ejabberd_hooks:delete(disco_sm_features, Host, ?MODULE, get_disco_features, 99),
-
-    ejabberd_hooks:delete(remove_user, Host, ?MODULE, remove_user, 50),
 
     gen_iq_handler:remove_iq_handler(ejabberd_local, Host, ?NS_MAM),
     gen_iq_handler:remove_iq_handler(ejabberd_sm, Host, ?NS_MAM),
