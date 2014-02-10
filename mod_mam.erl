@@ -87,7 +87,7 @@
 
 -record(filter, {start = none :: none | erlang:timestamp(),
                  'end' = none :: none | erlang:timestamp(),
-                 jid = none   :: none | binary(),
+                 jid = none   :: none | jid(),
                  rsm = #rsm{} :: #rsm{}}).
 
 
@@ -434,20 +434,32 @@ process_filter(_, {error, _E} = Error) -> Error;
 
 process_filter(#xmlel{name = <<"start">>} = Q, #filter{start = S} = F) ->
     Time = xml:get_tag_cdata(Q),
+
+    % 'start' tag may be defined only once
     case {S, jlib:datetime_string_to_timestamp(Time)} of
         {_, undefined} -> {error, ?ERR_BAD_REQUEST};
-        % 'start' tag may be defined only once
-        {none, Value} -> F#filter{start = Value};
-        _ -> {error, ?ERR_BAD_REQUEST}
+        {none, Value}  -> F#filter{start = Value};
+        _              -> {error, ?ERR_BAD_REQUEST}
     end;
 
 process_filter(#xmlel{name = <<"end">>} = Q, #filter{'end' = E} = F) ->
     Time = xml:get_tag_cdata(Q),
+
+    % 'end' tag may be defined only once
     case {E, jlib:datetime_string_to_timestamp(Time)} of
         {_, undefined} -> {error, ?ERR_BAD_REQUEST};
-        % 'end' tag may be defined only once
-        {none, Value} -> F#filter{'end' = Value};
-        _ -> {error, ?ERR_BAD_REQUEST}
+        {none, Value}  -> F#filter{'end' = Value};
+        _              -> {error, ?ERR_BAD_REQUEST}
+    end;
+
+process_filter(#xmlel{name = <<"with">>} = Q, #filter{jid = J} = F) ->
+    User = xml:get_tag_cdata(Q),
+
+    % 'with' tag may be defined only once
+    case {J, jlib:string_to_jid(User)} of
+        {_, error}  -> {error, ?ERR_BAD_REQUEST};
+        {none, Jid} -> F#filter{jid = Jid};
+        _           -> {error, ?ERR_BAD_REQUEST}
     end;
 
 process_filter(#xmlel{name = <<"set">>} = Q, #filter{rsm = RSM} = F) ->
@@ -557,6 +569,12 @@ objectid_to_binary(<<Hex:8, Bin/binary>>, Result) ->
     end,
     objectid_to_binary(Bin, [SL2|Result]).
 
+binary_to_objectid(BS) -> binary_to_objectid(BS, []).
+
+binary_to_objectid(<<>>, Result) ->
+    {list_to_binary(lists:reverse(Result))};
+binary_to_objectid(<<BS:2/binary, Bin/binary>>, Result) ->
+    binary_to_objectid(Bin, [erlang:binary_to_integer(BS, 16)|Result]).
 
 to_query(_Key, none)   -> none;
 to_query(start, Start) -> {ts, {'$gte', Start}};
