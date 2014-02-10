@@ -394,6 +394,14 @@ int_cdata(Tag) ->
         _ -> error
     end.
 
+objid_cdata(Tag) ->
+    CD = xml:get_tag_cdata(Tag),
+    case catch binary_to_objectid(CD) of
+        {'EXIT', _} -> error;
+        ObjId when is_tuple(ObjId) -> ObjId;
+        _ -> error
+    end.
+
 parse_rsm(_, error) -> error;
 parse_rsm([], RSM) -> RSM;
 parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
@@ -404,18 +412,18 @@ parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
                 Max -> RSM#rsm{max = Max}
             end;
         <<"after">> when RSM#rsm.after_item == none ->
-            case xml:get_tag_cdata(C) of
-                <<"">> -> error;
+            case objid_cdata(C) of
+                error -> error;
                 CD -> RSM#rsm{after_item = CD}
             end;
         <<"before">> when RSM#rsm.before_item == none ->
-            case xml:get_tag_cdata(C) of
-                <<"">> -> error;
+            case objid_cdata(C) of
+                error -> error;
                 CD -> RSM#rsm{before_item = CD}
             end;
         <<"index">> when RSM#rsm.index == none ->
-            case xml:get_tag_cdata(C) of
-                <<"">> -> error;
+            case objid_cdata(C) of
+                error -> error;
                 CD -> RSM#rsm{index = CD}
             end;
         _ -> error
