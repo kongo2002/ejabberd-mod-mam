@@ -78,7 +78,7 @@
 
 -record(state, {host = <<"">>        :: binary(),
                 ignore_chats = false :: boolean(),
-                pool}).
+                mongo}).
 
 -record(rsm, {max = none,
               after_item = none,
@@ -203,11 +203,16 @@ get_disco_features(Acc, _From, _To, _Node, _Lang) ->
 init([Host, Opts]) ->
     ?INFO_MSG("Starting mod_mam module of '~s'", [Host]),
 
+    % get options
     IQDisc = gen_mod:get_opt(iqdisc, Opts, false, one_queue),
     IgnoreChats = gen_mod:get_opt(ignore_chats, Opts, false, false),
     MongoConn = gen_mod:get_opt(mongo, Opts,
                                 fun ({H, P}) -> {H, P} end,
                                 {localhost, 27017}),
+    MongoDb = gen_mod:get_opt(mongo_database, Opts,
+                              fun (X) when is_atom(X) -> X end, test),
+    MongoColl = gen_mod:get_opt(mongo_collection, Opts,
+                                fun (X) when is_atom(X) -> X end, ejabberd_mam),
 
     % hook into send/receive packet
     ejabberd_hooks:add(user_send_packet, Host, ?MODULE, send_packet, 80),
@@ -222,10 +227,14 @@ init([Host, Opts]) ->
                                   process_local_iq, IQDisc),
 
     MPool = resource_pool:new(mongo:connect_factory(MongoConn), ?POOL_SIZE),
+    Mongo = {MPool, MongoDb, MongoColl},
+
+    ?INFO_MSG("Using MongoDB at ~p - database ~s - collection ~s",
+             [MongoConn, MongoDb, MongoColl]),
 
     {ok, #state{host = Host,
                 ignore_chats = IgnoreChats,
-                pool = MPool}}.
+                mongo = Mongo}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -266,11 +275,11 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
         #filter{start = S, 'end' = E, jid = J, rsm = RSM} ->
             ?DEBUG("Filter: ~p", [Filter]),
             User = From#jid.luser,
-            Pool = State#state.pool,
+            Mongo = State#state.mongo,
             QueryId = xml:get_tag_attr_s(<<"queryid">>, Query),
             Fs = [{start, S}, {'end', E}, {jid, J}],
 
-            case find(Pool, User, Fs, RSM) of
+            case find(Mongo, User, Fs, RSM) of
                 {error, Error} ->
                     ejabberd_router:route(To, From, Error);
                 Ms when is_list(Ms) ->
@@ -295,9 +304,9 @@ handle_cast({log, Dir, LUser, LServer, Jid, Packet}, State) ->
             case extract_body(Packet, IgnoreChats) of
                 ignore -> ok;
                 Body ->
-                    Pool = State#state.pool,
+                    Mongo = State#state.mongo,
                     Doc = msg_to_bson(Dir, LUser, LServer, Jid, Body, Packet),
-                    insert(Pool, Doc)
+                    insert(Mongo, Doc)
             end;
         false -> ok
     end,
@@ -333,7 +342,7 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 terminate(_Reason, State) ->
     Host = State#state.host,
-    Pool = State#state.pool,
+    {Pool, _Db, _Coll} = State#state.mongo,
 
     ?INFO_MSG("Stopping mod_mam module of '~s'", [Host]),
 
@@ -607,14 +616,15 @@ add_to_query({Key, X}, Query) ->
         Value -> [Value | Query]
     end.
 
-find(Pool, User, Filter, RSM) ->
+find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
     BaseQuery = [{user, User}],
     Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
     ?DEBUG("Query: ~p", [Query]),
-    Proj = {'_id', true, raw, true, ts, true},
-    Fun = fun () -> mongo:find(messages, Query, Proj) end,
 
-    case exec(Pool, Fun) of
+    Proj = {'_id', true, raw, true, ts, true},
+    Fun = fun () -> mongo:find(Coll, Query, Proj) end,
+
+    case exec(M, Fun) of
         false -> ok;
         none -> ok;
         Cursor ->
@@ -632,17 +642,17 @@ find(Pool, User, Filter, RSM) ->
             end
     end.
 
-insert(Pool, Element) ->
-    Fun = fun () -> mongo:insert(messages, Element) end,
-    exec(Pool, Fun, unsafe).
+insert({_Pool, _Db, Coll} = M, Element) ->
+    Fun = fun () -> mongo:insert(Coll, Element) end,
+    exec(M, Fun, unsafe).
 
-exec(Pool, Function) ->
-    exec(Pool, Function, safe).
+exec(Mongo, Function) ->
+    exec(Mongo, Function, safe).
 
-exec(Pool, Function, Mode) ->
+exec({Pool, Db, _Coll}, Function, Mode) ->
     case resource_pool:get(Pool) of
         {ok, Conn} ->
-            case mongo:do(Mode, slave_ok, Conn, test, Function) of
+            case mongo:do(Mode, slave_ok, Conn, Db, Function) of
                 {ok, {}} -> none;
                 {ok, {Found}} -> Found;
                 {ok, Cursor} -> Cursor
