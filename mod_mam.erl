@@ -277,7 +277,7 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
                     ejabberd_router:route(To, From, Error);
                 Ms when is_list(Ms) ->
                     ?INFO_MSG("Messages: ~p", [Ms]),
-                    spawn(fun() -> query_response(Ms, To, From, QueryId) end)
+                    spawn(fun() -> query_response(Ms, To, From, IQ#iq.id, QueryId) end)
             end;
         % filter processing failed for some reason
         % immediately return with an error
@@ -486,7 +486,7 @@ process_filter(#xmlel{name = <<"set">>} = Q, #filter{rsm = RSM} = F) ->
 
 process_filter(_, Filter) -> Filter.
 
-query_response(Messages, From, To, QueryId) ->
+query_response(Messages, From, To, Id, QueryId) ->
     Attr = [{<<"to">>, jlib:jid_to_string(To)}],
     Send = fun (Message) ->
                    case bson_to_msg(Message, QueryId) of
@@ -495,14 +495,20 @@ query_response(Messages, From, To, QueryId) ->
                            Xml = #xmlel{name = <<"message">>,
                                         attrs = Attr,
                                         children = [M]},
-                           ?INFO_MSG("Response: ~p", [Xml]),
                            ejabberd_router:route(From, To, Xml)
                    end
            end,
     lists:foreach(Send, Messages),
 
-    %TODO: terminating IQ stanza
-    ok.
+    IQAttr = [{<<"type">>, <<"result">>}],
+    IQAttrs = case Id of
+                  <<"">> -> IQAttr;
+                  _ -> [{<<"id">>, Id} | IQAttr]
+              end,
+
+    % terminating IQ stanza
+    IQ = #xmlel{name = <<"iq">>, attrs = IQAttrs},
+    ejabberd_router:route(From, To, IQ).
 
 get_proc(Host) ->
     gen_mod:get_module_proc(Host, ?PROCNAME).
