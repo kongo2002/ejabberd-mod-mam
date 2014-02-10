@@ -148,8 +148,6 @@ process_iq(From, To, IQ) ->
     process_local_iq(From, To, IQ).
 
 process_local_iq(From, To, #iq{sub_el = SubEl} = IQ) ->
-    ?INFO_MSG("IQ: ~p", [IQ]),
-
     Server = From#jid.lserver,
     case lists:member(Server, ?MYHOSTS) of
         false ->
@@ -266,7 +264,7 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
 
     case Filter of
         #filter{start = S, 'end' = E, jid = J, rsm = RSM} ->
-            ?INFO_MSG("Filter: ~p", [Filter]),
+            ?DEBUG("Filter: ~p", [Filter]),
             User = From#jid.luser,
             Pool = State#state.pool,
             QueryId = xml:get_tag_attr_s(<<"queryid">>, Query),
@@ -276,7 +274,7 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
                 {error, Error} ->
                     ejabberd_router:route(To, From, Error);
                 Ms when is_list(Ms) ->
-                    ?INFO_MSG("Messages: ~p", [Ms]),
+                    ?DEBUG("Messages: ~p", [Ms]),
                     spawn(fun() -> query_response(Ms, To, From, IQ#iq.id, QueryId) end)
             end;
         % filter processing failed for some reason
@@ -290,7 +288,7 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
     {noreply, State};
 
 handle_cast({log, Dir, LUser, LServer, Jid, Packet}, State) ->
-    ?INFO_MSG("Packet: ~p", [Packet]),
+    ?DEBUG("Packet: ~p", [Packet]),
     case should_store(LUser, LServer) of
         true ->
             IgnoreChats = State#state.ignore_chats,
@@ -612,7 +610,7 @@ add_to_query({Key, X}, Query) ->
 find(Pool, User, Filter, RSM) ->
     BaseQuery = [{user, User}],
     Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
-    ?INFO_MSG("Query: ~p", [Query]),
+    ?DEBUG("Query: ~p", [Query]),
     Proj = {'_id', true, raw, true, ts, true},
     Fun = fun () -> mongo:find(messages, Query, Proj) end,
 
