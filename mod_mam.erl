@@ -398,22 +398,22 @@ parse_rsm(_, error) -> error;
 parse_rsm([], RSM) -> RSM;
 parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
     Result = case Name of
-        <<"max">> ->
+        <<"max">> when RSM#rsm.max == none ->
             case int_cdata(C) of
                 error -> error;
                 Max -> RSM#rsm{max = Max}
             end;
-        <<"after">> ->
+        <<"after">> when RSM#rsm.after_item == none ->
             case xml:get_tag_cdata(C) of
                 <<"">> -> error;
                 CD -> RSM#rsm{after_item = CD}
             end;
-        <<"before">> ->
+        <<"before">> when RSM#rsm.before_item == none ->
             case xml:get_tag_cdata(C) of
                 <<"">> -> error;
                 CD -> RSM#rsm{before_item = CD}
             end;
-        <<"index">> ->
+        <<"index">> when RSM#rsm.index == none ->
             case xml:get_tag_cdata(C) of
                 <<"">> -> error;
                 CD -> RSM#rsm{index = CD}
