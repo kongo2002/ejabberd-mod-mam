@@ -85,6 +85,12 @@
               before_item = none,
               index = none}).
 
+-record(filter, {start = none :: none | erlang:timestamp(),
+                 'end' = none :: none | erlang:timestamp(),
+                 jid = none   :: none | binary(),
+                 rsm = #rsm{} :: #rsm{}}).
+
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -256,14 +262,11 @@ handle_call(_Request, _From, State) ->
 %%--------------------------------------------------------------------
 handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
     Children = Query#xmlel.children,
-    NoFilter = {undefined, undefined, undefined, #rsm{}},
-    case lists:foldl(fun process_filter/2, NoFilter, Children) of
-        {error, E} ->
-            Error = IQ#iq{type = error, sub_el = [Query, E]},
-            ErrXml = jlib:iq_to_xml(Error),
-            ejabberd_router:route(To, From, ErrXml);
-        {S, E, J, RSM} ->
-            ?INFO_MSG("Filter: ~p", [{S, E, J, RSM}]),
+    Filter = lists:foldl(fun process_filter/2, #filter{}, Children),
+
+    case Filter of
+        #filter{start = S, 'end' = E, rsm = RSM} ->
+            ?INFO_MSG("Filter: ~p", [Filter]),
             User = From#jid.luser,
             Pool = State#state.pool,
             QueryId = xml:get_tag_attr_s(<<"queryid">>, Query),
@@ -275,7 +278,13 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
                 Ms when is_list(Ms) ->
                     ?INFO_MSG("Messages: ~p", [Ms]),
                     spawn(fun() -> query_response(Ms, To, From, QueryId) end)
-            end
+            end;
+        % filter processing failed for some reason
+        % immediately return with an error
+        {error, E} ->
+            Error = IQ#iq{type = error, sub_el = [Query, E]},
+            ErrXml = jlib:iq_to_xml(Error),
+            ejabberd_router:route(To, From, ErrXml)
     end,
 
     {noreply, State};
@@ -423,32 +432,32 @@ get_limit(#rsm{max = M}) ->
 
 process_filter(_, {error, _E} = Error) -> Error;
 
-process_filter(#xmlel{name = <<"start">>} = Q, {S, E, J, RSM}) ->
+process_filter(#xmlel{name = <<"start">>} = Q, #filter{start = S} = F) ->
     Time = xml:get_tag_cdata(Q),
     case {S, jlib:datetime_string_to_timestamp(Time)} of
         {_, undefined} -> {error, ?ERR_BAD_REQUEST};
         % 'start' tag may be defined only once
-        {undefined, Value} -> {Value, E, J, RSM};
+        {none, Value} -> F#filter{start = Value};
         _ -> {error, ?ERR_BAD_REQUEST}
     end;
 
-process_filter(#xmlel{name = <<"end">>} = Q, {S, E, J, RSM}) ->
+process_filter(#xmlel{name = <<"end">>} = Q, #filter{'end' = E} = F) ->
     Time = xml:get_tag_cdata(Q),
     case {E, jlib:datetime_string_to_timestamp(Time)} of
         {_, undefined} -> {error, ?ERR_BAD_REQUEST};
         % 'end' tag may be defined only once
-        {undefined, Value} -> {S, Value, J, RSM};
+        {none, Value} -> F#filter{'end' = Value};
         _ -> {error, ?ERR_BAD_REQUEST}
     end;
 
-process_filter(#xmlel{name = <<"set">>} = Q, {S, E, J, RSM}) ->
+process_filter(#xmlel{name = <<"set">>} = Q, #filter{rsm = RSM} = F) ->
     % search for a RSM (XEP-0059) query statement
     case xml:get_tag_attr_s(<<"xmlns">>, Q) of
         ?NS_RSM ->
             Children = Q#xmlel.children,
             case parse_rsm(Children, RSM) of
                 error -> {error, ?ERR_BAD_REQUEST};
-                NRSM -> {S, E, J, NRSM}
+                NRSM -> F#filter{rsm = NRSM}
             end;
         _ ->
             % unknown/invalid 'set' statement
@@ -549,15 +558,15 @@ objectid_to_binary(<<Hex:8, Bin/binary>>, Result) ->
     objectid_to_binary(Bin, [SL2|Result]).
 
 
-to_query(_Key, undefined) -> undefined;
-to_query(start, Start)    -> {ts, {'$gte', Start}};
-to_query('end', End)      -> {ts, {'$lte', End}};
-to_query(_Key, _Value)    -> undefined.
+to_query(_Key, none)   -> none;
+to_query(start, Start) -> {ts, {'$gte', Start}};
+to_query('end', End)   -> {ts, {'$lte', End}};
+to_query(_Key, _Value) -> none.
 
-add_to_query({_Key, undefined}, Query) -> Query;
+add_to_query({_Key, none}, Query) -> Query;
 add_to_query({Key, X}, Query) ->
     case to_query(Key, X) of
-        undefined -> Query;
+        none -> Query;
         Value -> [Value | Query]
     end.
 
