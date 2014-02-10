@@ -4,6 +4,7 @@
 %%% Purpose : Message Archive Management (XEP-0313)
 %%% Created : 29 Jan 2014 by Gregor Uhlenheuer <kongo2002@gmail.com>
 %%%
+%%% Copyright (C) 2014 Gregor Uhlenheuer
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -22,7 +23,7 @@
 %%%----------------------------------------------------------------------
 
 -module(mod_mam).
--author('kongo2002@googlemail.com').
+-author('kongo2002@gmail.com').
 
 -behaviour(gen_server).
 -behaviour(gen_mod).
