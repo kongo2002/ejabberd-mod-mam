@@ -265,12 +265,12 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
     Filter = lists:foldl(fun process_filter/2, #filter{}, Children),
 
     case Filter of
-        #filter{start = S, 'end' = E, rsm = RSM} ->
+        #filter{start = S, 'end' = E, jid = J, rsm = RSM} ->
             ?INFO_MSG("Filter: ~p", [Filter]),
             User = From#jid.luser,
             Pool = State#state.pool,
             QueryId = xml:get_tag_attr_s(<<"queryid">>, Query),
-            Fs = [{start, S}, {'end', E}],
+            Fs = [{start, S}, {'end', E}, {jid, J}],
 
             case find(Pool, User, Fs, RSM) of
                 {error, Error} ->
@@ -579,12 +579,19 @@ binary_to_objectid(<<BS:2/binary, Bin/binary>>, Result) ->
 to_query(_Key, none)   -> none;
 to_query(start, Start) -> {ts, {'$gte', Start}};
 to_query('end', End)   -> {ts, {'$lte', End}};
+to_query(jid, #jid{luser = U, lserver = S, lresource = R}) ->
+    Query = [{'jid.user', U}, {'jid.server', S}],
+    case R of
+        <<"">> -> Query;
+        Res -> [{'jid.resource', Res} | Query]
+    end;
 to_query(_Key, _Value) -> none.
 
 add_to_query({_Key, none}, Query) -> Query;
 add_to_query({Key, X}, Query) ->
     case to_query(Key, X) of
         none -> Query;
+        Vs when is_list(Vs) -> Vs ++ Query;
         Value -> [Value | Query]
     end.
 
