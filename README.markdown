@@ -8,7 +8,7 @@ The module targets the so-called "Community Edition" of *ejabberd* that can be
 found on the current [master][master] branch of the ejabberd
 [repository][master] on github.
 
-> ejabberd-mod-mam is currently to be considered beta
+> ejabberd-mod-mam is a work in progress and currently to be considered beta
 
 
 ## Requirements
@@ -53,6 +53,12 @@ In order to use **mod-mam** you have to add it to the modules section in your
 * support for MongoDB replica sets
 * archiving preferences
 * tests
+
+
+## Maintainer
+
+*ejabberd-mod-mam* is written by Gregor Uhlenheuer. You can reach me at
+<kongo2002@gmail.com>.
 
 
 [xep]: http://xmpp.org/extensions/xep-0313.html
