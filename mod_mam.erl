@@ -569,6 +569,7 @@ find(Pool, User, Filter, RSM) ->
 
     case exec(Pool, Fun) of
         false -> ok;
+        none -> ok;
         Cursor ->
             case get_limit(RSM) of
                 {true, Max} ->
