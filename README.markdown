@@ -42,7 +42,7 @@ In order to use **mod-mam** you have to add it to the modules section in your
 
         % define a database to use
         % (default: test)
-        {mongo_databse, test},
+        {mongo_database, test},
 
         % specify a collection to use
         % (default: ejabberd_mam)
