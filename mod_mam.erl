@@ -543,25 +543,25 @@ get_connection_pool({Rs, Nodes} = Conn) when is_list(Nodes) ->
 get_jid_document(Jid) ->
     {U, S, R} = jlib:jid_tolower(Jid),
     case R of
-        <<"">> -> {user, U, server, S};
-        _  -> {user, U, server, S, resource, R}
+        <<"">> -> {u, U, s, S};  % user + server
+        _  -> {u, U, s, S, r, R} % user + server + resource
     end.
 
 msg_to_bson(Dir, LUser, LServer, Jid, Body, Xml) ->
-    { user, LUser,
-      server, LServer,
-      jid, get_jid_document(Jid),
-      body, Body,
-      direction, Dir,
-      ts, bson:timenow(),
-      raw, xml:element_to_binary(Xml)
+    { u, LUser,                     % user
+      s, LServer,                   % server
+      j, get_jid_document(Jid),     % jid
+      b, Body,                      % body
+      d, Dir,                       % direction
+      ts, bson:timenow(),           % timestamp
+      r, xml:element_to_binary(Xml) % raw XML
     }.
 
 bson_to_msg(Bson, QueryId) ->
     case Bson of
-        {'_id', Id, raw, Raw, ts, Ts} ->
+        {'_id', Id, r, Raw, ts, Ts} ->
             bson_to_msg(Id, Raw, Ts, QueryId);
-        {'_id', Id, ts, Ts, raw, Raw} ->
+        {'_id', Id, ts, Ts, r, Raw} ->
             bson_to_msg(Id, Raw, Ts, QueryId);
         _ -> none
     end.
@@ -617,10 +617,10 @@ to_query(_Key, none)   -> none;
 to_query(start, Start) -> {ts, {'$gte', Start}};
 to_query('end', End)   -> {ts, {'$lte', End}};
 to_query(jid, #jid{luser = U, lserver = S, lresource = R}) ->
-    Query = [{'jid.user', U}, {'jid.server', S}],
+    Query = [{'j.u', U}, {'j.s', S}],
     case R of
         <<"">> -> Query;
-        Res -> [{'jid.resource', Res} | Query]
+        Res -> [{'j.r', Res} | Query]
     end;
 to_query(_Key, _Value) -> none.
 
@@ -633,11 +633,11 @@ add_to_query({Key, X}, Query) ->
     end.
 
 find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
-    BaseQuery = [{user, User}],
+    BaseQuery = [{u, User}],
     Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
     ?DEBUG("Query: ~p", [Query]),
 
-    Proj = {'_id', true, raw, true, ts, true},
+    Proj = {'_id', true, r, true, ts, true},
     Fun = fun () -> mongo:find(Coll, Query, Proj) end,
 
     case exec(M, Fun) of
