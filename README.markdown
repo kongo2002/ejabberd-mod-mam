@@ -85,7 +85,7 @@ You may use MongoDB replica set connections as well:
 The messages that are stored as BSON documents in the MongoDB look like the
 following:
 
-``` json
+``` javascript
 {
     "_id" : ObjectId("531f6f25cdbb08145f000001"),
     "u" : "test2",
