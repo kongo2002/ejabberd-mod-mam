@@ -673,7 +673,9 @@ exec({Pool, Db, _Coll}, Function, Mode) ->
                 {ok, {Found}} -> Found;
                 {ok, Cursor} -> Cursor
             end;
-        {error, _Reason} -> false
+        {error, Reason} ->
+            ?ERROR_MSG("Error connecting to MongoDB: ~p", [Reason]),
+            false
     end.
 
 
