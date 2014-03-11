@@ -206,6 +206,8 @@ init([Host, Opts]) ->
     % get options
     IQDisc = gen_mod:get_opt(iqdisc, Opts, false, one_queue),
     IgnoreChats = gen_mod:get_opt(ignore_chats, Opts, false, false),
+
+    % get MongoDB options
     MongoConn = gen_mod:get_opt(mongo, Opts,
                                 fun ({H, P}) -> {H, P} end,
                                 {localhost, 27017}),
@@ -226,10 +228,11 @@ init([Host, Opts]) ->
     gen_iq_handler:add_iq_handler(ejabberd_local, Host, ?NS_MAM, ?MODULE,
                                   process_local_iq, IQDisc),
 
-    MPool = resource_pool:new(mongo:connect_factory(MongoConn), ?POOL_SIZE),
+    % create connection pool
+    MPool = get_connection_pool(MongoConn),
     Mongo = {MPool, MongoDb, MongoColl},
 
-    ?INFO_MSG("Using MongoDB at ~p - database ~s - collection ~s",
+    ?INFO_MSG("Using MongoDB at ~p - database '~s' - collection '~s'",
              [MongoConn, MongoDb, MongoColl]),
 
     {ok, #state{host = Host,
@@ -523,6 +526,19 @@ get_proc(Host) ->
 %%%-------------------------------------------------------------------
 %%% MongoDB functions
 %%%-------------------------------------------------------------------
+
+get_connection_pool({_Host, Port} = Conn) when is_integer(Port) ->
+    % single node connection pool
+    ?INFO_MSG("Connecting to a single node MongoDB at ~p", [Conn]),
+
+    resource_pool:new(mongo:connect_factory(Conn), ?POOL_SIZE);
+
+get_connection_pool({Rs, Nodes} = Conn) when is_list(Nodes) ->
+    % replica set connection pool
+    ?INFO_MSG("Connecting to replica set '~s' with nodes ~p", [Rs, Nodes]),
+
+    resource_pool:new(mongo:rs_connect_factory(Conn), ?POOL_SIZE).
+
 
 get_jid_document(Jid) ->
     {U, S, R} = jlib:jid_tolower(Jid),
