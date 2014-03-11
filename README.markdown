@@ -56,11 +56,34 @@ In order to use **mod-mam** you have to add it to the modules section in your
 ```
 
 
+### Replica sets
+
+You may use MongoDB replica set connections as well:
+
+
+``` erlang
+{modules,
+  [
+    {mod_mam,
+      [
+        % configure a named replica set and a list of nodes
+        {mongo, {<<"rs">>, [{localhost, 27017}, {localhost, 27018}]}},
+
+        % ...
+      ]
+    },
+
+    % ...
+  ]
+}.
+
+```
+
+
 ## TODO
 
 * fully implement RSM (XEP-0059)
 * ejabberd fork/branch with integrated mod\_mam
-* support for MongoDB replica sets
 * archiving preferences
 * tests
 
