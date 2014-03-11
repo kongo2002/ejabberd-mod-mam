@@ -80,6 +80,29 @@ You may use MongoDB replica set connections as well:
 ```
 
 
+## MongoDB
+
+The messages that are stored as BSON documents in the MongoDB look like the
+following:
+
+``` json
+{
+    "_id" : ObjectId("531f6f25cdbb08145f000001"),
+    "u" : "test2",
+    "s" : "localhost",
+    "j" : {
+        "u" : "test",
+        "s" : "localhost",
+        "r" : "sendxmpp"
+    },
+    "b" : "foo bar",
+    "d" : "to",
+    "ts" : ISODate("2014-03-11T20:16:37.772Z"),
+    "r" : "<message xml:lang='en' to='test@localhost/sendxmpp' type='chat'><body>foo bar</body><subject/></message>"
+}
+```
+
+
 ## TODO
 
 * fully implement RSM (XEP-0059)
