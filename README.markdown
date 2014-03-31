@@ -20,10 +20,22 @@ found on the current [master][master] branch of the ejabberd
 
 ## Install
 
-As of now there is no ready-to-use build/install script for the module.
-Basically all you have to do is to add the MongoDB erlang driver to the
-ejabberd rebar script and copy/link the `mod_mam.erl` into the `src` directory
-of ejabberd.
+In order to get going basically all you have to do is to add the MongoDB erlang
+driver to the ejabberd rebar script. Then you copy/link the `mod_mam.erl` into
+the `src` directory of ejabberd prior to compiling ejabberd itself.
+
+Otherwise you may use my [mod\_mam][mam-ejabberd] branch of the forked official
+ejabberd master branch. This branch is obviously not always *in-sync* with the
+current ejabberd development but my changes may be sufficient to give an idea
+how to add **mod\_mam** to your ejabberd compile process:
+
+``` bash
+$ git clone git://github.com/kongo2002/ejabberd.git
+$ cd ejabberd
+$ git checkout origin/mod_mam -b mod_mam
+$ ./configure --enable-mongodb
+$ make
+```
 
 
 ## Configuration
@@ -121,3 +133,4 @@ following:
 [mongo]: http://mongodb.org
 [master]: https://github.com/processone/ejabberd/tree/master
 [driver]: https://github.com/mongodb/mongodb-erlang/tree/master
+[mam-ejabberd]: https://github.com/kongo2002/ejabberd/mod_mam
