@@ -133,4 +133,4 @@ following:
 [mongo]: http://mongodb.org
 [master]: https://github.com/processone/ejabberd/tree/master
 [driver]: https://github.com/mongodb/mongodb-erlang/tree/master
-[mam-ejabberd]: https://github.com/kongo2002/ejabberd/mod_mam
+[mam-ejabberd]: https://github.com/kongo2002/ejabberd/tree/mod_mam
