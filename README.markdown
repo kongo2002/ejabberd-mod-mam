@@ -118,7 +118,6 @@ following:
 ## TODO
 
 * fully implement RSM (XEP-0059)
-* ejabberd fork/branch with integrated mod\_mam
 * archiving preferences
 * tests
 
