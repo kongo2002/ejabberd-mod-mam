@@ -67,6 +67,18 @@ In order to use **mod-mam** you have to add it to the modules section in your
 }.
 ```
 
+Using the new [YAML][yaml] format the same configuration would look like the
+following:
+
+``` yaml
+modules:
+  mod_mam:
+    mongo:
+      localhost: 27017
+    mongo_database: test
+    mongo_collection: messages
+```
+
 
 ### Replica sets
 
@@ -89,6 +101,17 @@ You may use MongoDB replica set connections as well:
   ]
 }.
 
+```
+
+The [YAML][yaml] equivalent looks like this:
+
+``` yaml
+modules:
+  mod_mam:
+    mongo:
+      "rs":
+        localhost: 27017
+        localhost: 27018
 ```
 
 
@@ -133,3 +156,4 @@ following:
 [master]: https://github.com/processone/ejabberd/tree/master
 [driver]: https://github.com/mongodb/mongodb-erlang/tree/master
 [mam-ejabberd]: https://github.com/kongo2002/ejabberd/tree/mod_mam
+[yaml]: http://www.yaml.org/
