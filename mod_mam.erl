@@ -209,7 +209,9 @@ init([Host, Opts]) ->
 
     % get MongoDB options
     MongoConn = gen_mod:get_opt(mongo, Opts,
-                                fun ({H, P}) -> {H, P} end,
+                                fun ({H, P}) -> {H, P};
+                                    ([{H, P}]) -> {H, P}
+                                end,
                                 {localhost, 27017}),
     MongoDb = gen_mod:get_opt(mongo_database, Opts,
                               fun (X) when is_atom(X) -> X end, test),
