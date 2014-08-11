@@ -308,6 +308,10 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
 %% in the message archive
 handle_cast({log, Dir, LUser, LServer, Jid, Packet}, State) ->
     ?DEBUG("Packet: ~p", [Packet]),
+
+    % TODO: we should add an '<archived/>' tag to the original message
+    % TODO: this probably means we have to use the filter_packet hook instead
+
     case should_store(LUser, LServer) of
         true ->
             IgnoreChats = State#state.ignore_chats,
