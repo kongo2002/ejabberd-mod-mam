@@ -272,6 +272,9 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+
+%% handle a 'process_query' request meaning a client request to query
+%% for specific messages inside the message archive
 handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
     Children = Query#xmlel.children,
     Filter = lists:foldl(fun process_filter/2, #filter{}, Children),
@@ -301,6 +304,8 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
 
     {noreply, State};
 
+%% handle a 'log' request meaning a message that should be stored
+%% in the message archive
 handle_cast({log, Dir, LUser, LServer, Jid, Packet}, State) ->
     ?DEBUG("Packet: ~p", [Packet]),
     case should_store(LUser, LServer) of
@@ -560,6 +565,7 @@ get_connection_pool({Rs, Nodes} = Conn) when is_list(Nodes) ->
     resource_pool:new(mongo:rs_connect_factory(Conn), ?POOL_SIZE).
 
 
+%% build a BSON document based on the given JID
 get_jid_document(Jid) ->
     {U, S, R} = jlib:jid_tolower(Jid),
     case R of
@@ -567,6 +573,7 @@ get_jid_document(Jid) ->
         _  -> {u, U, s, S, r, R} % user + server + resource
     end.
 
+%% build a BSON of the given message details
 msg_to_bson(Dir, LUser, LServer, Jid, Body, Xml) ->
     { u, LUser,                     % user
       s, LServer,                   % server
@@ -577,6 +584,8 @@ msg_to_bson(Dir, LUser, LServer, Jid, Body, Xml) ->
       r, xml:element_to_binary(Xml) % raw XML
     }.
 
+%% build a XML message that is returned as response of the client
+%% query based on a given BSON message record
 bson_to_msg(Bson, QueryId) ->
     case Bson of
         {'_id', Id, r, Raw, ts, Ts} ->
@@ -652,6 +661,8 @@ add_to_query({Key, X}, Query) ->
         Value -> [Value | Query]
     end.
 
+%% query the mongo database for specific messages using a query
+%% based on optional filters/RSM instructions
 find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
     BaseQuery = [{u, User}],
     Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
@@ -678,10 +689,12 @@ find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
             end
     end.
 
+%% insert a new message document
 insert({_Pool, _Db, Coll} = M, Element) ->
     Fun = fun () -> mongo:insert(Coll, Element) end,
     exec(M, Fun, unsafe).
 
+%% execute a mongo command using the specified connection pool
 exec(Mongo, Function) ->
     exec(Mongo, Function, safe).
 
