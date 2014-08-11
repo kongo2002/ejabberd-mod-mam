@@ -399,6 +399,7 @@ extract_body(#xmlel{name = <<"message">>} = Xml, IgnoreChats) ->
 
 extract_body(_, _) -> ignore.
 
+%% try to extract an integer out of an XML tag content
 int_cdata(Tag) ->
     CD = xml:get_tag_cdata(Tag),
     case catch binary_to_integer(CD) of
@@ -406,6 +407,7 @@ int_cdata(Tag) ->
         _ -> error
     end.
 
+%% try to extract an ObjectId out of an XML tag content
 objid_cdata(Tag) ->
     CD = xml:get_tag_cdata(Tag),
     case catch binary_to_objectid(CD) of
@@ -414,6 +416,14 @@ objid_cdata(Tag) ->
         _ -> error
     end.
 
+%% determine the maximum amount of messages to return
+get_limit(#rsm{max = M}) ->
+    case M of
+        Max when is_integer(Max), Max =< ?MAX_QUERY_LIMIT -> {true, Max};
+        _ -> {false, ?MAX_QUERY_LIMIT}
+    end.
+
+%% parse RSM instructions according to XEP-0059
 parse_rsm(_, error) -> error;
 parse_rsm([], RSM) -> RSM;
 parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
@@ -444,14 +454,15 @@ parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
     parse_rsm(Cs, Result);
 parse_rsm([_ | Cs], RSM) -> parse_rsm(Cs, RSM).
 
-get_limit(#rsm{max = M}) ->
-    case M of
-        Max when is_integer(Max), Max =< ?MAX_QUERY_LIMIT -> {true, Max};
-        _ -> {false, ?MAX_QUERY_LIMIT}
-    end.
+%%%-------------------------------------------------------------------
+%%% Process all possible filters
+%%%-------------------------------------------------------------------
 
+% propagate errors on filter processing
 process_filter(_, {error, _E} = Error) -> Error;
 
+%% start:
+%%  filter all messages before a certain date/time
 process_filter(#xmlel{name = <<"start">>} = Q, #filter{start = S} = F) ->
     Time = xml:get_tag_cdata(Q),
 
@@ -462,6 +473,8 @@ process_filter(#xmlel{name = <<"start">>} = Q, #filter{start = S} = F) ->
         _              -> {error, ?ERR_BAD_REQUEST}
     end;
 
+%% end:
+%%  filter all messages after a certain date/time
 process_filter(#xmlel{name = <<"end">>} = Q, #filter{'end' = E} = F) ->
     Time = xml:get_tag_cdata(Q),
 
@@ -472,6 +485,8 @@ process_filter(#xmlel{name = <<"end">>} = Q, #filter{'end' = E} = F) ->
         _              -> {error, ?ERR_BAD_REQUEST}
     end;
 
+%% with:
+%%  match messages that contain a specific JID
 process_filter(#xmlel{name = <<"with">>} = Q, #filter{jid = J} = F) ->
     User = xml:get_tag_cdata(Q),
 
@@ -482,6 +497,8 @@ process_filter(#xmlel{name = <<"with">>} = Q, #filter{jid = J} = F) ->
         _           -> {error, ?ERR_BAD_REQUEST}
     end;
 
+%% set:
+%%  limit results via RSM (result set management - XEP-0059)
 process_filter(#xmlel{name = <<"set">>} = Q, #filter{rsm = RSM} = F) ->
     % search for a RSM (XEP-0059) query statement
     case xml:get_tag_attr_s(<<"xmlns">>, Q) of
@@ -498,6 +515,7 @@ process_filter(#xmlel{name = <<"set">>} = Q, #filter{rsm = RSM} = F) ->
 
 process_filter(_, Filter) -> Filter.
 
+%% construct and send the response to the query request
 query_response(Messages, From, To, Id, QueryId) ->
     Attr = [{<<"to">>, jlib:jid_to_string(To)}],
     Send = fun (Message) ->
