@@ -702,7 +702,9 @@ find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
     end.
 
 take(Cursor, Count) ->
-    lists:reverse(take(Cursor, Count, [])).
+    Result = lists:reverse(take(Cursor, Count, [])),
+    mongo:close_cursor(Cursor),
+    Result.
 
 take(Cursor, Count, Acc) when Count > 0 ->
     case mongo:next(Cursor) of
