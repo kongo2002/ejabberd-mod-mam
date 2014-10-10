@@ -681,9 +681,9 @@ find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
         Cursor ->
             case get_limit(RSM) of
                 {true, Max} ->
-                    mongo:take(Max, Cursor);
+                    take(Cursor, Max);
                 {false, Max} ->
-                    Rs = mongo:take(Max+1, Cursor),
+                    Rs = take(Cursor, Max+1),
                     Len = length(Rs),
                     if Len > Max ->
                            E = ?MAM_POLICY_VIOLATION(<<"Too many results">>),
@@ -692,6 +692,16 @@ find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
                     end
             end
     end.
+
+take(Cursor, Count) ->
+    lists:reverse(take(Cursor, Count, [])).
+
+take(Cursor, Count, Acc) when Count > 0 ->
+    case mongo:next(Cursor) of
+        {}  -> Acc;
+        {X} -> take(Cursor, Count-1, [X|Acc])
+    end;
+take(_Cursor, _Count, Acc) -> Acc.
 
 %% insert a new message document
 insert({_Pool, _Db, Coll} = M, Element) ->
