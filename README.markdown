@@ -11,11 +11,23 @@ found on the current [master][master] branch of the ejabberd
 > ejabberd-mod-mam is a work in progress and currently to be considered beta
 
 
+## XEP-0313
+
+I recently noticed that the XEP-0313 was updated to *Version 3* that basically
+changed all of the query and result syntax. As of now **this module still
+targets the Version 2** of the XEP-0313.
+
+
 ## Requirements
 
 * ejabberd community edition
 * >= erlang R16B01
 * mongodb erlang driver ([repository][driver]) and its dependencies
+
+Since the *MongoDB erlang driver* changed the maintainer and received various
+API changes while reducing some of its features (i.e. support for replica sets)
+this module still uses the *old* version of the MongoDB driver meaning the
+commit tagged with `v0.3.1`.
 
 
 ## Install
@@ -154,6 +166,6 @@ following:
 [xep]: http://xmpp.org/extensions/xep-0313.html
 [mongo]: http://mongodb.org
 [master]: https://github.com/processone/ejabberd/tree/master
-[driver]: https://github.com/mongodb/mongodb-erlang/tree/master
+[driver]: https://github.com/comtihon/mongodb-erlang/tree/master
 [mam-ejabberd]: https://github.com/kongo2002/ejabberd/tree/mod_mam
 [yaml]: http://www.yaml.org/
