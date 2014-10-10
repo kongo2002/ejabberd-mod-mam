@@ -673,11 +673,24 @@ add_to_query({Key, X}, Query) ->
         Value -> [Value | Query]
     end.
 
+get_order(#rsm{before_item = B}) ->
+    case B of
+        last -> desc;
+        _    -> asc
+    end.
+
+query_order(desc) -> {'_id', -1};
+query_order(asc)  -> {'_id', 1}.
+
 %% query the mongo database for specific messages using a query
 %% based on optional filters/RSM instructions
 find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
-    BaseQuery = [{u, User}],
-    Query = bson:document(lists:foldl(fun add_to_query/2, BaseQuery, Filter)),
+    Base = [{u, User}],
+    BaseQuery = bson:document(lists:foldl(fun add_to_query/2, Base, Filter)),
+    Order = get_order(RSM),
+    QueryOrder = query_order(Order),
+    Query = {'$query', BaseQuery, '$orderby', QueryOrder},
+
     ?DEBUG("Query: ~p", [Query]),
 
     Proj = {'_id', true, r, true, ts, true},
@@ -689,9 +702,9 @@ find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
         Cursor ->
             case get_limit(RSM) of
                 {true, Max} ->
-                    take(Cursor, Max);
+                    take(Cursor, Max, Order);
                 {false, Max} ->
-                    Rs = take(Cursor, Max+1),
+                    Rs = take(Cursor, Max+1, Order),
                     Len = length(Rs),
                     if Len > Max ->
                            E = ?MAM_POLICY_VIOLATION(<<"Too many results">>),
@@ -701,17 +714,20 @@ find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
             end
     end.
 
-take(Cursor, Count) ->
-    Result = lists:reverse(take(Cursor, Count, [])),
+take(Cursor, Count, Order) ->
+    Result = take_inner(Cursor, Count, []),
     mongo:close_cursor(Cursor),
-    Result.
+    case Order of
+        desc -> Result;
+        asc  -> lists:reverse(Result)
+    end.
 
-take(Cursor, Count, Acc) when Count > 0 ->
+take_inner(Cursor, Count, Acc) when Count > 0 ->
     case mongo:next(Cursor) of
         {}  -> Acc;
-        {X} -> take(Cursor, Count-1, [X|Acc])
+        {X} -> take_inner(Cursor, Count-1, [X|Acc])
     end;
-take(_Cursor, _Count, Acc) -> Acc.
+take_inner(_Cursor, _Count, Acc) -> Acc.
 
 %% insert a new message document
 insert({_Pool, _Db, Coll} = M, Element) ->
