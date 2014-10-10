@@ -425,6 +425,9 @@ objid_cdata(Tag) ->
         _ -> error
     end.
 
+is_empty(#xmlel{attrs = [], children = []}) -> true;
+is_empty(_) -> false.
+
 %% determine the maximum amount of messages to return
 get_limit(#rsm{max = M}) ->
     case M of
@@ -448,9 +451,14 @@ parse_rsm([#xmlel{name = Name} = C | Cs], RSM) ->
                 CD -> RSM#rsm{after_item = CD}
             end;
         <<"before">> when RSM#rsm.before_item == none ->
-            case objid_cdata(C) of
-                error -> error;
-                CD -> RSM#rsm{before_item = CD}
+            % an empty 'before' tag requests the last page of entries
+            case is_empty(C) of
+                true -> RSM#rsm{before_item = last};
+                _ ->
+                    case objid_cdata(C) of
+                        error -> error;
+                        CD -> RSM#rsm{before_item = CD}
+                    end
             end;
         <<"index">> when RSM#rsm.index == none ->
             case objid_cdata(C) of
