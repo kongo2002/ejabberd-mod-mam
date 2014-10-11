@@ -87,8 +87,8 @@
 
 -record(filter, {start = none :: none | erlang:timestamp(),
                  'end' = none :: none | erlang:timestamp(),
-                 jid = none   :: none | jid(),
-                 rsm = #rsm{} :: #rsm{}}).
+                 jid   = none :: none | jid(),
+                 rsm   = none :: none | #rsm{}}).
 
 
 %%%===================================================================
@@ -292,7 +292,10 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
                     ejabberd_router:route(To, From, Error);
                 Ms when is_list(Ms) ->
                     ?DEBUG("Messages: ~p", [Ms]),
-                    spawn(fun() -> query_response(Ms, To, From, IQ#iq.id, QueryId) end)
+                    spawn(
+                      fun() ->
+                        query_response(Ms, To, From, IQ#iq.id, QueryId, RSM)
+                      end)
             end;
         % filter processing failed for some reason
         % immediately return with an error
@@ -429,6 +432,7 @@ is_empty(#xmlel{attrs = [], children = []}) -> true;
 is_empty(_) -> false.
 
 %% determine the maximum amount of messages to return
+get_limit(none) -> {false, ?MAX_QUERY_LIMIT};
 get_limit(#rsm{max = M}) ->
     case M of
         Max when is_integer(Max), Max =< ?MAX_QUERY_LIMIT -> {true, Max};
@@ -516,12 +520,12 @@ process_filter(#xmlel{name = <<"with">>} = Q, #filter{jid = J} = F) ->
 
 %% set:
 %%  limit results via RSM (result set management - XEP-0059)
-process_filter(#xmlel{name = <<"set">>} = Q, #filter{rsm = RSM} = F) ->
+process_filter(#xmlel{name = <<"set">>} = Q, #filter{} = F) ->
     % search for a RSM (XEP-0059) query statement
     case xml:get_tag_attr_s(<<"xmlns">>, Q) of
         ?NS_RSM ->
             Children = Q#xmlel.children,
-            case parse_rsm(Children, RSM) of
+            case parse_rsm(Children, #rsm{}) of
                 error -> {error, ?ERR_BAD_REQUEST};
                 NRSM -> F#filter{rsm = NRSM}
             end;
@@ -533,7 +537,7 @@ process_filter(#xmlel{name = <<"set">>} = Q, #filter{rsm = RSM} = F) ->
 process_filter(_, Filter) -> Filter.
 
 %% construct and send the response to the query request
-query_response(Messages, From, To, Id, QueryId) ->
+query_response(Messages, From, To, Id, QueryId, RSM) ->
     Attr = [{<<"to">>, jlib:jid_to_string(To)}],
     Send = fun (Message) ->
                    case bson_to_msg(Message, QueryId) of
@@ -553,9 +557,52 @@ query_response(Messages, From, To, Id, QueryId) ->
                   _ -> [{<<"id">>, Id} | IQAttr]
               end,
 
+    % in case the client requested with RSM we have
+    % to respond with the appropriate paging information
+    Children =
+        case RSM of
+            none -> [];
+            _    -> get_rsm_response(Messages)
+        end,
+
     % terminating IQ stanza
-    IQ = #xmlel{name = <<"iq">>, attrs = IQAttrs},
+    IQ = #xmlel{name = <<"iq">>, attrs = IQAttrs, children = Children},
     ejabberd_router:route(From, To, IQ).
+
+get_id_ts({'_id', Id, r, _Raw, ts, Ts}) -> {Id, Ts};
+get_id_ts({'_id', Id, ts, Ts, r, _Raw}) -> {Id, Ts}.
+
+get_rsm_response([]) -> [];
+get_rsm_response(Ms) ->
+    % 'Ms' is expected to be sorted by timestamp
+    H = hd(Ms),
+    L = lists:last(Ms),
+    Count = list_to_binary(integer_to_list(length(Ms))),
+    {First, Start} = get_id_ts(H),
+    {Last, End} = get_id_ts(L),
+
+    % TODO: support 'index' on the 'first' node
+    Set = #xmlel{name = <<"set">>, attrs = [{<<"xmlns">>, ?NS_RSM}],
+                 children = [#xmlel{name = <<"first">>,
+                                    children = [{xmlcdata,
+                                                 objectid_to_binary(First)}]},
+                             #xmlel{name = <<"last">>,
+                                    children = [{xmlcdata,
+                                                 objectid_to_binary(Last)}]},
+                             #xmlel{name = <<"count">>,
+                                    children = [{xmlcdata, Count}]}
+                            ]},
+
+    Cs = [#xmlel{name = <<"start">>, children = [{xmlcdata,
+                                                  build_timestamp(Start)}]},
+          #xmlel{name = <<"end">>,   children = [{xmlcdata,
+                                                  build_timestamp(End)}]},
+          Set],
+
+    Query = #xmlel{name = <<"query">>,
+                   attrs = [{<<"xmlns">>, ?NS_MAM}],
+                   children = Cs},
+    [Query].
 
 get_proc(Host) ->
     gen_mod:get_module_proc(Host, ?PROCNAME).
@@ -621,9 +668,7 @@ bson_to_msg(Id, Raw, Ts, QueryId) ->
                  end,
 
             % build 'delay' node
-            UTC = calendar:now_to_universal_time(Ts),
-            {Time, TZ} = jlib:timestamp_to_iso(UTC, utc),
-            Stamp = <<Time/binary, TZ/binary>>,
+            Stamp = build_timestamp(Ts),
             Delay = #xmlel{name = <<"delay">>,
                            attrs = [{<<"xmlns">>, ?NS_DELAY},
                                     {<<"stamp">>, Stamp}]},
@@ -634,6 +679,11 @@ bson_to_msg(Id, Raw, Ts, QueryId) ->
                                        children = [Delay, Xml]}
                               ]}
     end.
+
+build_timestamp(Ts) ->
+    UTC = calendar:now_to_universal_time(Ts),
+    {Time, TZ} = jlib:timestamp_to_iso(UTC, utc),
+    <<Time/binary, TZ/binary>>.
 
 objectid_to_binary({Id}) -> objectid_to_binary(Id, []).
 
@@ -673,6 +723,7 @@ add_to_query({Key, X}, Query) ->
         Value -> [Value | Query]
     end.
 
+get_order(none) -> asc;
 get_order(#rsm{before_item = B}) ->
     case B of
         last -> desc;
