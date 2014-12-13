@@ -30,7 +30,6 @@
 
 
 -include("ejabberd.hrl").
--include("logger.hrl").
 -include("jlib.hrl").
 
 
@@ -57,8 +56,6 @@
 -define(PROCNAME, ejabberd_mod_mam).
 -define(POOL_SIZE, 10).
 -define(MAX_QUERY_LIMIT, 50).
-
--define(NS_MAM, <<"urn:xmpp:mam:tmp">>).
 
 -define(MAM_POLICY_VIOLATION(Text),
         #xmlel{name = <<"iq">>,
@@ -204,19 +201,14 @@ init([Host, Opts]) ->
     ?INFO_MSG("Starting mod_mam module of '~s'", [Host]),
 
     % get options
-    IQDisc = gen_mod:get_opt(iqdisc, Opts, false, one_queue),
-    IgnoreChats = gen_mod:get_opt(ignore_chats, Opts, false, false),
+    IQDisc = gen_mod:get_opt(iqdisc, Opts, one_queue),
+    IgnoreChats = gen_mod:get_opt(ignore_chats, Opts, false),
 
     % get MongoDB options
     MongoConn = gen_mod:get_opt(mongo, Opts,
-                                fun ({H, P}) -> {H, P};
-                                    ([{H, P}]) -> {H, P}
-                                end,
                                 {localhost, 27017}),
-    MongoDb = gen_mod:get_opt(mongo_database, Opts,
-                              fun (X) when is_atom(X) -> X end, test),
-    MongoColl = gen_mod:get_opt(mongo_collection, Opts,
-                                fun (X) when is_atom(X) -> X end, ejabberd_mam),
+    MongoDb = gen_mod:get_opt(mongo_database, Opts, test),
+    MongoColl = gen_mod:get_opt(mongo_collection, Opts, ejabberd_mam),
 
     % hook into send/receive packet
     ejabberd_hooks:add(user_send_packet, Host, ?MODULE, send_packet, 80),
