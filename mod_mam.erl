@@ -38,8 +38,8 @@
 -export([start_link/2,
          start/2,
          stop/1,
-         send_packet/3,
-         receive_packet/4,
+         send_packet/4,
+         receive_packet/5,
          get_disco_features/5,
          process_iq/3,
          process_local_iq/3
@@ -129,15 +129,17 @@ stop(Host) ->
     supervisor:terminate_child(ejabberd_sup, Proc),
     supervisor:delete_child(ejabberd_sup, Proc).
 
-send_packet(From, To, Packet) ->
+send_packet(Packet, _State, From, To) ->
     Host = From#jid.lserver,
     Proc = get_proc(Host),
-    gen_server:cast(Proc, {log, to, From#jid.luser, Host, To, Packet}).
+    gen_server:cast(Proc, {log, to, From#jid.luser, Host, To, Packet}),
+    Packet.
 
-receive_packet(_Jid, From, To, Packet) ->
+receive_packet(Packet, _State, _Jid, From, To) ->
     Host = To#jid.lserver,
     Proc = get_proc(Host),
-    gen_server:cast(Proc, {log, from, To#jid.luser, Host, From, Packet}).
+    gen_server:cast(Proc, {log, from, To#jid.luser, Host, From, Packet}),
+    Packet.
 
 
 %%%-------------------------------------------------------------------
@@ -285,7 +287,7 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
             User = From#jid.luser,
             Mongo = State#state.mongo,
             QueryId = xml:get_tag_attr_s(<<"queryid">>, Query),
-            Fs = [{start, S}, {'end', E}, {jid, J}],
+            Fs = [{start, S}, {'end', E}, {jid, J}, {rsm, RSM}],
 
             case find(Mongo, User, Fs, RSM) of
                 {error, Error} ->
@@ -713,6 +715,23 @@ to_query(jid, #jid{luser = U, lserver = S, lresource = R}) ->
         <<"">> -> Query;
         Res -> [{'j.r', Res} | Query]
     end;
+to_query(rsm, RSM) ->
+    Before =
+        case RSM#rsm.before_item of
+            none -> [];
+            last -> [];
+            BOId -> [{'_id', {'$lt', BOId}}]
+        end,
+    After =
+        case RSM#rsm.after_item of
+            none -> [];
+            last -> [];
+            AOId -> [{'_id', {'$gt', AOId}}]
+        end,
+    case lists:flatten([Before, After]) of
+        [] -> none;
+        Qs -> Qs
+    end;
 to_query(_Key, _Value) -> none.
 
 add_to_query({_Key, none}, Query) -> Query;
@@ -723,11 +742,13 @@ add_to_query({Key, X}, Query) ->
         Value -> [Value | Query]
     end.
 
+% no 'before' tag was specified -> ascending
 get_order(none) -> asc;
 get_order(#rsm{before_item = B}) ->
     case B of
+        none -> asc;
         last -> desc;
-        _    -> asc
+        _    -> desc
     end.
 
 query_order(desc) -> {'_id', -1};
@@ -765,13 +786,10 @@ find({_Pool, _Db, Coll} = M, User, Filter, RSM) ->
             end
     end.
 
-take(Cursor, Count, Order) ->
+take(Cursor, Count, _Order) ->
     Result = take_inner(Cursor, Count, []),
     mongo:close_cursor(Cursor),
-    case Order of
-        desc -> Result;
-        asc  -> lists:reverse(Result)
-    end.
+    lists:reverse(Result).
 
 take_inner(Cursor, Count, Acc) when Count > 0 ->
     case mongo:next(Cursor) of
