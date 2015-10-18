@@ -42,7 +42,8 @@
          receive_packet/5,
          get_disco_features/5,
          process_iq/3,
-         process_local_iq/3
+         process_local_iq/3,
+         mod_opt_type/1
         ]).
 
 
@@ -808,5 +809,13 @@ exec({Pool, Db, _Coll}, Function, Mode) ->
             false
     end.
 
+mod_opt_type(iqdisc) -> fun gen_iq_handler:check_type/1;
+mod_opt_type(ignore_chats) -> fun(B) when is_boolean(B) -> B end;
+mod_opt_type(mongo) -> fun ({H, P}) -> {H, P};
+                           ([{H, P}]) -> {H, P} end;
+mod_opt_type(mongo_database) -> fun(B) when is_atom(B) -> B end;
+mod_opt_type(mongo_collection) -> fun(B) when is_atom(B) -> B end;
+mod_opt_type(_) ->
+    [iqdisc, ignore_chats, mongo, mongo_database, mongo_collection].
 
 % vim: set et sw=4 sts=4 tw=80:
