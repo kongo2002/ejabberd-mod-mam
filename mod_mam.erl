@@ -287,7 +287,9 @@ handle_cast({process_query, From, To, #iq{sub_el = Query} = IQ}, State) ->
             User = From#jid.luser,
             Mongo = State#state.mongo,
             QueryId = xml:get_tag_attr_s(<<"queryid">>, Query),
-            Fs = [{start, S}, {'end', E}, {jid, J}, {rsm, RSM}],
+            Fs = [{start, S}, {'end', E}, {jid, J},
+                  {before, RSM#rsm.before_item},
+                  {'after', RSM#rsm.after_item}],
 
             case find(Mongo, User, Fs, RSM) of
                 {error, Error} ->
@@ -715,23 +717,9 @@ to_query(jid, #jid{luser = U, lserver = S, lresource = R}) ->
         <<"">> -> Query;
         Res -> [{'j.r', Res} | Query]
     end;
-to_query(rsm, RSM) ->
-    Before =
-        case RSM#rsm.before_item of
-            none -> [];
-            last -> [];
-            BOId -> [{'_id', {'$lt', BOId}}]
-        end,
-    After =
-        case RSM#rsm.after_item of
-            none -> [];
-            last -> [];
-            AOId -> [{'_id', {'$gt', AOId}}]
-        end,
-    case lists:flatten([Before, After]) of
-        [] -> none;
-        Qs -> Qs
-    end;
+to_query(_Key, last) -> none;
+to_query(before, OId) -> {'_id', {'$lt', OId}};
+to_query('after', OId) -> {'_id', {'$gt', OId}};
 to_query(_Key, _Value) -> none.
 
 add_to_query({_Key, none}, Query) -> Query;
