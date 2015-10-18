@@ -117,7 +117,7 @@ start(Host, Opts) ->
     Child =
         {Proc,
          {?MODULE, start_link, [Host, Opts]},
-         permanent,
+         transient,
          1000,
          worker,
          [?MODULE]},
@@ -128,7 +128,8 @@ stop(Host) ->
     Proc = get_proc(Host),
     gen_server:call(Proc, stop),
     supervisor:terminate_child(ejabberd_sup, Proc),
-    supervisor:delete_child(ejabberd_sup, Proc).
+    supervisor:delete_child(ejabberd_sup, Proc),
+    ok.
 
 send_packet(Packet, _State, From, To) ->
     Host = From#jid.lserver,
